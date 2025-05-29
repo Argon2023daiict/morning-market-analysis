@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Market Analysis Assistant AI</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 600px;
+      margin: 40px auto;
+      padding: 20px;
+      background: #f7f7f7;
+      border-radius: 8px;
+    }
+    input[type="file"] {
+      margin: 20px 0;
+      width: 100%;
+    }
+    button {
+      background-color: #007bff;
+      border: none;
+      color: white;
+      padding: 12px 20px;
+      font-size: 16px;
+      border-radius: 5px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 10px;
+    }
+    button:disabled {
+      background-color: #aaa;
+      cursor: not-allowed;
+    }
+    #result-text {
+      margin-top: 30px;
+      font-size: 18px;
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      min-height: 80px;
+      white-space: pre-wrap;
+    }
+    #audio-player {
+      margin-top: 20px;
+      width: 100%;
+      display: none; /* hidden by default */
+    }
+    #error {
+      color: red;
+      margin-top: 20px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Market Analysis Assistant</h1>
+
+  <label><strong>Upload Audio File:</strong></label>
+  <input type="file" id="audioInput" accept="audio/*" />
+  <button id="submitFileBtn" disabled>Submit File</button>
+
+  <hr />
+
+  <label><strong>Or Record Audio Live:</strong></label>
+  <button id="startRecordBtn">Start Recording</button>
+  <button id="stopRecordBtn" disabled>Stop Recording & Submit</button>
+
+  <div id="result-text" aria-live="polite"></div>
+  <audio id="audio-player" controls></audio>
+  <div id="error" role="alert"></div>
+
+  <script>
+    const audioInput = document.getElementById('audioInput');
+    const submitFileBtn = document.getElementById('submitFileBtn');
+    const startRecordBtn = document.getElementById('startRecordBtn');
+    const stopRecordBtn = document.getElementById('stopRecordBtn');
+    const resultText = document.getElementById('result-text');
+    const audioPlayer = document.getElementById('audio-player');
+    const errorDiv = document.getElementById('error');
+
+    // Enable submit button only if a file is chosen
+    audioInput.addEventListener('change', () => {
+      errorDiv.textContent = '';
+      resultText.textContent = '';
+      audioPlayer.style.display = 'none';
+      audioPlayer.src = '';
+      submitFileBtn.disabled = audioInput.files.length === 0;
+    });
+
+    submitFileBtn.addEventListener('click', async () => {
+      if (audioInput.files.length === 0) return;
+      await sendAudioFile(audioInput.files[0]);
+    });
+
+    // Audio recording setup
+    let mediaRecorder;
+    let recordedChunks = [];
+
+    startRecordBtn.addEventListener('click', async () => {
+      errorDiv.textContent = '';
+      resultText.textContent = '';
+      audioPlayer.style.display = 'none';
+      audioPlayer.src = '';
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        errorDiv.textContent = 'Media recording is not supported in your browser.';
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+
+        recordedChunks = [];
+
+        mediaRecorder.ondataavailable = e => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(recordedChunks, { type: 'audio/wav' });
+          await sendAudioFile(blob);
+        };
+
+        mediaRecorder.start();
+        startRecordBtn.disabled = true;
+        stopRecordBtn.disabled = false;
+      } catch (err) {
+        errorDiv.textContent = 'Error accessing microphone: ' + err.message;
+      }
+    });
+
+    stopRecordBtn.addEventListener('click', () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        startRecordBtn.disabled = false;
+        stopRecordBtn.disabled = true;
+      }
+    });
+
+    async function sendAudioFile(file) {
+      submitFileBtn.disabled = true;
+      startRecordBtn.disabled = true;
+      stopRecordBtn.disabled = true;
+      resultText.textContent = 'Processing...';
+      errorDiv.textContent = '';
+      audioPlayer.style.display = 'none';
+      audioPlayer.src = '';
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch('/respond/', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server returned status ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.error) {
+          throw new Error(data.error);
+        }
+
+        resultText.textContent = data.answer || 'No text returned';
+
+        if (data.audio_b64) {
+          const audioBlob = base64ToBlob(data.audio_b64, 'audio/wav');
+          const audioUrl = URL.createObjectURL(audioBlob);
+          audioPlayer.src = audioUrl;
+          audioPlayer.style.display = 'block';
+          try {
+            await audioPlayer.play();
+          } catch {
+            // Autoplay might be blocked; user can press play manually
+          }
+        } else {
+          audioPlayer.style.display = 'none';
+        }
+      } catch (err) {
+        errorDiv.textContent = 'Error: ' + err.message;
+        resultText.textContent = '';
+      } finally {
+        submitFileBtn.disabled = audioInput.files.length === 0;
+        startRecordBtn.disabled = false;
+        stopRecordBtn.disabled = true;
+      }
+    }
+
+    function base64ToBlob(base64, mime) {
+      const binary = atob(base64);
+      const len = binary.length;
+      const buffer = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        buffer[i] = binary.charCodeAt(i);
+      }
+      return new Blob([buffer], { type: mime });
+    }
+  </script>
+
+</body>
+</html>
